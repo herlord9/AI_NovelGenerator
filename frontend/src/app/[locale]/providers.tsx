@@ -1,5 +1,6 @@
 "use client";
 
+import "@/lib/cryptoRandomUUIDPolyfill";
 import { I18nProvider } from "@heroui/react";
 import { ThemeProvider as NextThemesProvider } from "next-themes";
 import { ThemeCustomizationProvider } from "@/components/ThemeCustomizationProvider";

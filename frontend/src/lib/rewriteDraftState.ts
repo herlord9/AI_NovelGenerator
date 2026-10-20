@@ -6,7 +6,7 @@ import type {
 } from "@/types/novel";
 
 function createClientId(prefix: string): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return `${prefix}_${crypto.randomUUID()}`;
   }
 

@@ -4,7 +4,7 @@ const DRAFT_KEY_PREFIX = "writing_draft:";
 const CURRENT_DRAFT_KEY = "writing_draft_current";
 
 function createDraftId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
 
