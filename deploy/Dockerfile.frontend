@@ -1,0 +1,18 @@
+# 仅作可选依赖镜像；日常推荐直接用 node:20-bookworm-slim + 挂载本机构建产物。
+FROM node:20-bookworm-slim
+
+WORKDIR /app
+
+RUN npm config set registry https://registry.npmmirror.com
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm install --omit=dev
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=9002 \
+    HOSTNAME=0.0.0.0 \
+    NEXT_PUBLIC_API_BASE=http://117.72.100.59:9001
+
+EXPOSE 9002
+CMD ["npx", "next", "start", "--hostname", "0.0.0.0", "--port", "9002"]

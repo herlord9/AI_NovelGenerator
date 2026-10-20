@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --hostname 127.0.0.1 --port 9002",
     "build": "next build",
-    "start": "next start",
+    "start": "next start --hostname 127.0.0.1 --port 9002",
+    "prod": "node ./scripts/run-prod.mjs",
     "lint": "eslint"
   },
   "dependencies": {
@@ -43,5 +44,8 @@
     "eslint-config-next": "16.2.10",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "optionalDependencies": {
+    "@swc/helpers": "^0.5.23"
   }
 }

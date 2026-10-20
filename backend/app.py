@@ -82,20 +82,17 @@ from backend.runtime import (
     apply_runtime_flags_from_argv,
     build_uvicorn_log_config,
     get_backend_port,
-    get_frontend_port,
+    get_bind_host,
+    get_frontend_origins,
     is_backend_debug_enabled,
 )
 
 apply_runtime_flags_from_argv()
 
 logger = logging.getLogger(__name__)
-BACKEND_HOST = "127.0.0.1"
+BACKEND_HOST = get_bind_host()
 BACKEND_PORT = get_backend_port()
-FRONTEND_PORT = get_frontend_port()
-FRONTEND_ORIGINS = [
-    f"http://127.0.0.1:{FRONTEND_PORT}",
-    f"http://localhost:{FRONTEND_PORT}",
-]
+FRONTEND_ORIGINS = get_frontend_origins()
 
 
 # FastAPI setup with lifespan
@@ -166,7 +163,7 @@ async def require_database(request: Request, call_next):
     return await call_next(request)
 
 
-# CORS 与启动器选定的前端端口保持一致，同时兼容 localhost 与 IPv4 回环地址。
+# CORS 与当前环境的前端来源保持一致。生产配置只放行 config_prod.yaml 中的域名。
 app.add_middleware(
     CORSMiddleware,
     allow_origins=FRONTEND_ORIGINS,

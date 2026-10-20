@@ -8,14 +8,22 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from pathlib import Path
 from typing import Any, Iterable
+
+import yaml
 
 BACKEND_DEBUG_ENV_VAR = "NOVEL_GENERATOR_BACKEND_DEBUG"
 BACKEND_PORT_ENV_VAR = "NOVEL_GENERATOR_BACKEND_PORT"
 FRONTEND_PORT_ENV_VAR = "NOVEL_GENERATOR_FRONTEND_PORT"
-DEFAULT_BACKEND_PORT = 8200
-DEFAULT_FRONTEND_PORT = 3300
+PROFILE_ENV_VAR = "NOVEL_GENERATOR_PROFILE"
+DEFAULT_BACKEND_HOST = "0.0.0.0"
+DEFAULT_BACKEND_PORT = 9001
+DEFAULT_FRONTEND_PORT = 9002
 _TRUE_VALUES = {"1", "true", "yes", "on", "debug"}
+_PROD_VALUES = {"prod", "production"}
+_PROD_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "config_prod.yaml"
+_prod_config_cache: dict[str, Any] | None = None
 
 # 每次绑定都创建新字典，异步请求和子任务不会修改彼此的日志上下文。
 log_context: ContextVar[dict[str, str]] = ContextVar("log_context", default={})
@@ -92,15 +100,89 @@ def _is_truthy(value: str | None) -> bool:
 
 
 def _get_port_from_env(env_name: str, default_port: int) -> int:
-    raw_value = os.getenv(env_name, str(default_port)).strip()
+    raw_value = os.getenv(env_name)
+    if raw_value is None or not raw_value.strip():
+        return _validate_port(default_port, env_name)
+    return _validate_port(raw_value.strip(), env_name)
+
+
+def _validate_port(raw_value: object, label: str) -> int:
     try:
-        port = int(raw_value)
-    except ValueError as exc:
-        raise ValueError(f"{env_name} 必须是整数，当前值为 {raw_value!r}") from exc
+        port = int(str(raw_value).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} 必须是整数，当前值为 {raw_value!r}") from exc
 
     if not 1 <= port <= 65535:
-        raise ValueError(f"{env_name} 必须位于 1 到 65535 之间，当前值为 {port}")
+        raise ValueError(f"{label} 必须位于 1 到 65535 之间，当前值为 {port}")
     return port
+
+
+def use_prod_profile() -> bool:
+    """当前进程是否按生产配置启动。"""
+    return os.getenv(PROFILE_ENV_VAR, "").strip().lower() in _PROD_VALUES
+
+
+def _load_prod_config() -> dict[str, Any]:
+    """读取生产域名与端口配置。"""
+    global _prod_config_cache
+    if _prod_config_cache is not None:
+        return _prod_config_cache
+    if not _PROD_CONFIG_PATH.exists():
+        raise FileNotFoundError(f"生产配置不存在：{_PROD_CONFIG_PATH}")
+    with _PROD_CONFIG_PATH.open("r", encoding="utf-8") as file:
+        data = yaml.safe_load(file) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"生产配置必须是映射：{_PROD_CONFIG_PATH}")
+    _prod_config_cache = data
+    return data
+
+
+def get_bind_host() -> str:
+    """进程监听地址。默认 0.0.0.0，生产配置可覆盖。"""
+    if use_prod_profile():
+        host = str(_load_prod_config().get("bind_host") or "").strip()
+        if not host:
+            raise ValueError("config_prod.yaml 缺少 bind_host")
+        return host
+    return DEFAULT_BACKEND_HOST
+
+
+def get_public_host() -> str:
+    """浏览器访问使用的主机名。优先读生产配置中的公网 IP。"""
+    try:
+        host = str(_load_prod_config().get("public_host") or "").strip()
+        if host and host != "0.0.0.0":
+            return host
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+    return "127.0.0.1"
+
+
+def get_cors_hosts() -> list[str]:
+    """CORS 允许的主机：本机 + 生产公网 IP。"""
+    hosts = ["127.0.0.1", "localhost"]
+    public_host = get_public_host()
+    if public_host not in hosts:
+        hosts.append(public_host)
+    return hosts
+
+
+def get_public_scheme() -> str:
+    """对外访问协议。"""
+    if not use_prod_profile():
+        return "http"
+    scheme = str(_load_prod_config().get("public_scheme") or "http").strip().lower()
+    if scheme not in {"http", "https"}:
+        raise ValueError(f"public_scheme 只能是 http 或 https，当前值为 {scheme!r}")
+    return scheme
+
+
+def _prod_port(key: str, fallback: int) -> int:
+    if not use_prod_profile():
+        return fallback
+    if key not in _load_prod_config():
+        raise ValueError(f"config_prod.yaml 缺少 {key}")
+    return _validate_port(_load_prod_config()[key], key)
 
 
 def get_backend_port() -> int:
@@ -110,12 +192,14 @@ def get_backend_port() -> int:
         无。
 
     Returns:
-        环境变量指定的有效 TCP 端口；未指定时返回项目默认端口。
+        环境变量指定的有效 TCP 端口；未指定时，生产配置优先，否则返回项目默认端口。
 
     Raises:
         ValueError: 环境变量不是整数或超出有效端口范围。
     """
-    return _get_port_from_env(BACKEND_PORT_ENV_VAR, DEFAULT_BACKEND_PORT)
+    if os.getenv(BACKEND_PORT_ENV_VAR, "").strip():
+        return _get_port_from_env(BACKEND_PORT_ENV_VAR, DEFAULT_BACKEND_PORT)
+    return _prod_port("backend_port", DEFAULT_BACKEND_PORT)
 
 
 def get_frontend_port() -> int:
@@ -125,12 +209,28 @@ def get_frontend_port() -> int:
         无。
 
     Returns:
-        环境变量指定的有效 TCP 端口；未指定时返回项目默认端口。
+        环境变量指定的有效 TCP 端口；未指定时，生产配置优先，否则返回项目默认端口。
 
     Raises:
         ValueError: 环境变量不是整数或超出有效端口范围。
     """
-    return _get_port_from_env(FRONTEND_PORT_ENV_VAR, DEFAULT_FRONTEND_PORT)
+    if os.getenv(FRONTEND_PORT_ENV_VAR, "").strip():
+        return _get_port_from_env(FRONTEND_PORT_ENV_VAR, DEFAULT_FRONTEND_PORT)
+    return _prod_port("frontend_port", DEFAULT_FRONTEND_PORT)
+
+
+def format_origin(host: str, port: int, scheme: str | None = None) -> str:
+    """拼对外地址。80/443 不带端口。"""
+    resolved_scheme = scheme or get_public_scheme()
+    if (resolved_scheme == "http" and port == 80) or (resolved_scheme == "https" and port == 443):
+        return f"{resolved_scheme}://{host}"
+    return f"{resolved_scheme}://{host}:{port}"
+
+
+def get_frontend_origins() -> list[str]:
+    """浏览器来源白名单：本机与生产公网 IP 均放行。"""
+    port = get_frontend_port()
+    return [format_origin(host, port) for host in get_cors_hosts()]
 
 
 def apply_runtime_flags_from_argv(argv: Iterable[str] | None = None) -> bool:

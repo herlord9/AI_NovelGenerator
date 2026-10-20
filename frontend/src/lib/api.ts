@@ -1,6 +1,10 @@
 import { notifyResourceChange } from "@/lib/resourceChanges";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8200";
+// next dev 固定本机；仅 production 构建读取 NEXT_PUBLIC_API_BASE（npm run prod 才会写成公网 IP）
+const API_BASE =
+  process.env.NODE_ENV === "production"
+    ? (process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:9001")
+    : "http://127.0.0.1:9001";
 
 /** 成功的业务写入通知常驻助手更新资料；生成和配置请求不算保存。
  * Args: path 已成功的业务请求路径。

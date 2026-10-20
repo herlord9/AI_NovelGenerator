@@ -36,8 +36,11 @@ from backend.runtime import (
     DEFAULT_BACKEND_PORT,
     DEFAULT_FRONTEND_PORT,
     FRONTEND_PORT_ENV_VAR,
+    format_origin,
     get_backend_port,
+    get_bind_host,
     get_frontend_port,
+    get_public_host,
 )
 from .settings import (
     load_launcher_settings,
@@ -250,6 +253,7 @@ class ServicePanel(QWidget):
         self, master, service_key: str, title: str, command: list[str],
         cwd: Path, port: int, url: str,
         env: dict[str, str] | None = None,
+        display_host: str = "127.0.0.1",
     ):
         super().__init__(master)
         self.setObjectName("servicePanel")
@@ -260,6 +264,7 @@ class ServicePanel(QWidget):
         self.env = env or {}
         self.port = port
         self.url = url
+        self.display_host = display_host
         self._proc: subprocess.Popen | None = None
         self._monitor_thread: threading.Thread | None = None
         self._start_thread: threading.Thread | None = None
@@ -295,7 +300,7 @@ class ServicePanel(QWidget):
         self.status_badge = QLabel()
         self.status_badge.setObjectName("serviceStatus")
         header.addWidget(self.status_badge)
-        self.address_label = QLabel(f"127.0.0.1:{port}")
+        self.address_label = QLabel(f"{display_host}:{port}")
         self.address_label.setObjectName("muted")
         header.addWidget(self.address_label)
         header.addStretch()
@@ -980,7 +985,7 @@ class ServicePanel(QWidget):
             self.port = port
             self.url = url
             self.env = dict(env)
-        self.address_label.setText(f"127.0.0.1:{port}")
+        self.address_label.setText(f"{self.display_host}:{port}")
         return True
 
     def force_cleanup(self) -> bool:
@@ -1150,10 +1155,13 @@ class App(QMainWindow):
         self.frontend_page_btn.clicked.connect(lambda: webbrowser.open(self.frontend.url))
         self.tabs.setCornerWidget(web_links, Qt.Corner.TopRightCorner)
         layout.addWidget(self.tabs, 1)
+        public_host = get_public_host()
         self.backend = ServicePanel(
             self.tabs, service_key="backend", title="后端", command=[str(VENV_PYTHON), "main.py"],
-            cwd=BASE_DIR, port=self.backend_port, url=f"http://127.0.0.1:{self.backend_port}/docs",
+            cwd=BASE_DIR, port=self.backend_port,
+            url=f"{format_origin(public_host, self.backend_port)}/docs",
             env={BACKEND_PORT_ENV_VAR: str(self.backend_port), FRONTEND_PORT_ENV_VAR: str(self.frontend_port)},
+            display_host=public_host,
         )
         self.tabs.addTab(self.backend, "后端日志  ·  未启动")
         self.backend_debug = IconButton("bug", "调试日志", show_text=True)
@@ -1163,8 +1171,9 @@ class App(QMainWindow):
         self._on_backend_debug_change()
         self.frontend = ServicePanel(
             self.tabs, service_key="frontend", title="前端", command=[], cwd=FRONTEND_DIR,
-            port=self.frontend_port, url=f"http://127.0.0.1:{self.frontend_port}",
-            env={"NEXT_PUBLIC_API_BASE": f"http://127.0.0.1:{self.backend_port}"},
+            port=self.frontend_port, url=format_origin(public_host, self.frontend_port),
+            env={"NEXT_PUBLIC_API_BASE": format_origin(public_host, self.backend_port)},
+            display_host=public_host,
         )
         self.tabs.addTab(self.frontend, "前端日志  ·  未启动")
         self.frontend_mode = QComboBox()
@@ -1262,7 +1271,7 @@ class App(QMainWindow):
 
         backend_configured = self.backend.configure_runtime(
             port=settings.backend_port,
-            url=f"http://127.0.0.1:{settings.backend_port}/docs",
+            url=f"{format_origin(get_public_host(), settings.backend_port)}/docs",
             env={
                 BACKEND_PORT_ENV_VAR: str(settings.backend_port),
                 FRONTEND_PORT_ENV_VAR: str(settings.frontend_port),
@@ -1270,8 +1279,8 @@ class App(QMainWindow):
         )
         frontend_configured = self.frontend.configure_runtime(
             port=settings.frontend_port,
-            url=f"http://127.0.0.1:{settings.frontend_port}",
-            env={"NEXT_PUBLIC_API_BASE": f"http://127.0.0.1:{settings.backend_port}"},
+            url=format_origin(get_public_host(), settings.frontend_port),
+            env={"NEXT_PUBLIC_API_BASE": format_origin(get_public_host(), settings.backend_port)},
         )
         if not backend_configured or not frontend_configured:
             self._set_port_status("服务状态已变化，请停止服务后重试", "error")
@@ -1396,7 +1405,7 @@ class App(QMainWindow):
     def _on_frontend_mode_change(self, mode: str, *, announce: bool = True) -> None:
         cmd = [
             self.npm_cmd, "run", "start" if mode == "生产模式" else "dev",
-            "--", "--hostname", "127.0.0.1", "--port", str(self.frontend_port),
+            "--", "--hostname", get_bind_host(), "--port", str(self.frontend_port),
         ]
 
         self.frontend.set_command(cmd, build_before_start=mode == "生产模式")

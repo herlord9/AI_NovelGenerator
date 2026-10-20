@@ -1,0 +1,71 @@
+name: novel-generator-prod
+
+services:
+  mongodb:
+    image: mongo:8.0
+    container_name: novel-generator-mongodb
+    restart: unless-stopped
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--oplogSize", "128"]
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - novel_generator_mongodb_data:/data/db
+      - novel_generator_mongodb_config:/data/configdb
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "quit(db.hello().isWritablePrimary ? 0 : 1)"]
+      interval: 5s
+      timeout: 5s
+      start_period: 20s
+      retries: 12
+
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    image: novel-generator-backend:prod
+    container_name: novel-generator-backend
+    restart: unless-stopped
+    environment:
+      NOVEL_GENERATOR_PROFILE: prod
+      NOVEL_GENERATOR_BACKEND_PORT: "9001"
+      NOVEL_GENERATOR_FRONTEND_PORT: "9002"
+      NOVEL_GENERATOR_MONGODB_URL: "mongodb://mongodb:27017/?replicaSet=rs0&directConnection=true"
+      NOVEL_GENERATOR_MONGO_DATABASE_NAME: novel_generator
+    ports:
+      - "9001:9001"
+    depends_on:
+      - mongodb
+    volumes:
+      - ..:/app
+      - novel_generator_user_data:/app/user_data
+      - /app/.venv
+      - /app/__pycache__
+
+  # 本机 standalone 构建后上传 frontend/.next/standalone；服务器不再 npm install
+  frontend:
+    image: node:20-bookworm-slim
+    container_name: novel-generator-frontend
+    restart: unless-stopped
+    working_dir: /app
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      PORT: "9002"
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "9002:9002"
+    depends_on:
+      - backend
+    volumes:
+      - ../frontend/.next/standalone:/app
+      - ../frontend/.next/static:/app/.next/static
+      - ../frontend/public:/app/public
+    command: ["node", "server.js"]
+
+volumes:
+  novel_generator_mongodb_data:
+    name: novel-generator-mongodb-data
+  novel_generator_mongodb_config:
+    name: novel-generator-mongodb-config
+  novel_generator_user_data:
+    name: novel-generator-user-data
